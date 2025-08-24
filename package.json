@@ -1,24 +1,28 @@
 {
-  "name": "mapping-studio",
-  "private": true,
-  "version": "0.0.1",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview --strictPort --port 5173",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "yaml": "^2.8.1"
-  },
-  "devDependencies": {
-    "@types/react": "^18.3.24",
-    "@types/react-dom": "^18.3.7",
-    "@vitejs/plugin-react": "^5.0.1",
-    "typescript": "^5.9.2",
-    "vite": "^5.4.19"
-  }
+    "name": "mapping-studio",
+    "private": true,
+    "version": "0.0.1",
+    "type": "module",
+    "description": "Browser-only CSV→DTO mapping sandbox. Hybrid: TS engine + JS UI.",
+    "scripts": {
+        "dev": "vite",
+        "typecheck": "tsc --noEmit -p tsconfig.json",
+        "build": "npm run typecheck && vite build",
+        "preview": "vite preview --strictPort --port 5173"
+    },
+    "dependencies": {
+        "react": "^18.3.1",
+        "react-dom": "^18.3.1",
+        "yaml": "^2.8.1"
+    },
+    "devDependencies": {
+        "@types/react": "^18.3.24",
+        "@types/react-dom": "^18.3.7",
+        "@vitejs/plugin-react": "^5.0.1",
+        "typescript": "^5.9.2",
+        "vite": "^5.4.19"
+    },
+    "engines": {
+        "node": ">=20 <23"
+    }
 }
