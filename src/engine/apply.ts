@@ -2,7 +2,12 @@ import type { Mapping, RowResult } from './types'
 
 function toTitleCase(input: unknown): unknown {
   if (typeof input !== 'string') return input
-  return input.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase())
+  return input.replace(/\w\S*/g, (w: string) => {
+    if (w.length === 0) return w
+    const head = w.charAt(0).toUpperCase()
+    const tail = w.slice(1).toLowerCase()
+    return head + tail
+  })
 }
 
 function applyPipeline(row: Record<string, unknown>, pipeline: any[]): unknown {
