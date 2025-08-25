@@ -28,6 +28,10 @@ jobs:
 
       - run: npm run typecheck
 
+      - name: Expose build metadata
+        run: |
+          echo "VITE_GIT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
       - run: npm run build
 
       - run: cp dist/index.html dist/404.html || true
