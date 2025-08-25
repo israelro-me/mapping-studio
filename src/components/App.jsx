@@ -75,7 +75,7 @@ export default function App() {
                 <button className="btn" onClick={() => setTheme('system')}>Use system</button>
             </div>
 
-            <section style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+            <section style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 16 }}>
                 <div>
                     <h3>Mapping YAML</h3>
                     <textarea
