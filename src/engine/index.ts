@@ -1,2 +1,2 @@
 export * from './types'
-export { transformRow } from './apply'
+export { transformWithDoc } from './apply'

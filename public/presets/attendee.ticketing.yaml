@@ -1,0 +1,92 @@
+preset: "ticketing.attendee"
+version: 1
+dto: AttendeeDto
+
+# No real joins yet; we reference synthetic $datasets in the row
+datasets:
+  attendees: { primary_key: attendee_id }
+  tickets: { primary_key: attendee_id }
+  checkins: { primary_key: attendee_id }
+
+mappings:
+  email:
+    - take: { from: $attendees.email }
+    - trim: {}
+    - lower: {}
+
+  firstName:
+    - take: { from: $attendees.first_name }
+    - title: {}
+
+  lastName:
+    - take: { from: $attendees.last_name }
+    - title: {}
+
+  ticketTier:
+    - take: { from: $tickets.tier }
+    - trim: {}
+    - mapEnum:
+        caseInsensitive: true
+        map:
+          general: GENERAL
+          vip: VIP
+          student: STUDENT
+    - default: { value: UNKNOWN, reason: TIER_DEFAULTED }
+
+  seatZone:
+    - take: { from: $tickets.seat_zone }
+    - mapEnum:
+        caseInsensitive: true
+        map: { ga: GA, a: A, b: B, c: C }
+    - default: { value: GA, reason: ZONE_DEFAULTED }
+
+  marketingAllowed:
+    - take: { from: $attendees.do_not_contact }
+    - toBool: {}
+    - invertBool: {}
+
+  marketingOptTimestamp:
+    - if:
+        when: { isTrue: { from: $attendees.marketing_opt_in } }
+        then: { now: {} }
+        else: { take: { from: $attendees.marketing_opt_ts } }
+    - default: { value: null }
+
+  agreements:
+    - coalesce:
+        - split: { from: $attendees.consent_codes, by: "," }
+        - arrayOf: { from: $checkins.waiver_code }
+    - default: { value: [] }
+
+  lifecycleStage:
+    - call:
+        fn: computeLifecycleStage
+        ver: 1
+        args:
+          status: $attendees.status
+          registered_at: $attendees.registered_at
+          last_checkin: $checkins.checkin_time
+
+readiness:
+  blocked:
+    - when: { missing: [email] }
+      reason: MISSING_EMAIL
+  review:
+    - when: { invalidEmail: { ref: email } }
+      reason: INVALID_EMAIL
+  ready:
+    - otherwise: true
+
+reasons_catalog:
+  - code: MISSING_EMAIL
+    severity: error
+    message: "Email is required."
+  - code: INVALID_EMAIL
+    severity: warn
+    message: "Email format looks invalid."
+  - code: TIER_DEFAULTED
+    severity: info
+    message: "Ticket tier defaulted to UNKNOWN."
+  - code: ZONE_DEFAULTED
+    severity: info
+    message: "Zone defaulted to GA."

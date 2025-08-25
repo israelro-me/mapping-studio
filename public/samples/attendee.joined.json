@@ -1,0 +1,25 @@
+{
+  "$attendees": {
+    "attendee_id": "A001",
+    "email": "Ada@Example.COM  ",
+    "first_name": "ada",
+    "last_name": "LOVELACE",
+    "status": "registered",
+    "registered_at": "2025-05-01T10:00:00Z",
+    "marketing_opt_in": true,
+    "marketing_opt_ts": "",
+    "do_not_contact": false,
+    "consent_codes": "photo-consent,newsletter"
+  },
+  "$tickets": {
+    "attendee_id": "A001",
+    "ticket_id": "T100",
+    "tier": "vip",
+    "seat_zone": ""
+  },
+  "$checkins": {
+    "attendee_id": "A001",
+    "checkin_time": "",
+    "waiver_code": "photo-consent"
+  }
+}
