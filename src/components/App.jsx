@@ -1,7 +1,18 @@
 import React from 'react'
 
-// Fallback YAML used if the preset fails to load.
-// Keep it compatible with the ticketing joined-row shape.
+// --- Monaco imports (ESM) ---
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api'
+import 'monaco-editor/esm/vs/basic-languages/yaml/yaml.contribution'
+import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker'
+
+// Monaco worker wiring (Vite-friendly)
+self.MonacoEnvironment = {
+    getWorker() {
+        return new EditorWorker()
+    }
+}
+
+// Fallback YAML used if the preset fails to load (kept minimal)
 const DEFAULT_YAML = `# Fallback preset (minimal)
 dto: AttendeeDto
 mappings:
@@ -37,12 +48,24 @@ function useTheme() {
     return [theme, setTheme]
 }
 
+// Flatten object to "$scope.path" → value entries
+function* flatten(obj, scope = '', prefix = '') {
+    if (obj == null || typeof obj !== 'object') return
+    for (const [k, v] of Object.entries(obj)) {
+        const next = prefix ? `${prefix}.${k}` : k
+        if (v && typeof v === 'object' && !Array.isArray(v)) {
+            yield* flatten(v, scope, next)
+        } else {
+            yield [scope ? `${scope}.${next}` : next, v]
+        }
+    }
+}
+
+function copyToClipboard(text) {
+    try { navigator.clipboard?.writeText(text) } catch { /* no-op */ }
+}
+
 export default function App() {
-    const [yaml, setYaml] = React.useState(DEFAULT_YAML)
-    const [presetLoaded, setPresetLoaded] = React.useState(false)
-    const [sampleRow, setSampleRow] = React.useState(null)
-    const [output, setOutput] = React.useState(null)
-    const [err, setErr] = React.useState(null)
     const [theme, setTheme] = useTheme()
 
     // Build metadata (injected via vite.config define)
@@ -52,22 +75,30 @@ export default function App() {
         time: typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : new Date().toISOString()
     }
 
-    // Worker setup
+    const [yaml, setYaml] = React.useState(DEFAULT_YAML)
+    const [presetLoaded, setPresetLoaded] = React.useState(false)
+    const [sampleRow, setSampleRow] = React.useState(null)
+    const [err, setErr] = React.useState(null)
+    const [activeRightTab, setActiveRightTab] = React.useState('output') // 'output' | 'source'
+    const [activeDataset, setActiveDataset] = React.useState('$attendees') // $attendees | $tickets | $checkins
+    const [showRaw, setShowRaw] = React.useState(false)
+    const [output, setOutput] = React.useState(null)
+
+    // Worker
     const workerRef = React.useRef(null)
     React.useEffect(() => {
         const w = new Worker(new URL('../worker/index.ts', import.meta.url), { type: 'module' })
         w.onmessage = (ev) => {
             const msg = ev.data
             if (msg.type === 'transform_result') {
-                if (msg.ok) { setOutput(msg.result); setErr(null) }
-                else { setErr(msg.error); setOutput(null) }
+                if (msg.ok) { setOutput(msg.result); setErr(null) } else { setErr(msg.error); setOutput(null) }
             }
         }
         workerRef.current = w
         return () => w.terminate()
     }, [])
 
-    // Load the synthetic joined row from /public/samples/...
+    // Fetch sample row
     React.useEffect(() => {
         let cancelled = false
         const url = `${import.meta.env.BASE_URL}samples/attendee.joined.json`
@@ -78,22 +109,104 @@ export default function App() {
         return () => { cancelled = true }
     }, [])
 
-    // Load the ticketing preset YAML from /public/presets/...
+    // Fetch preset YAML
     React.useEffect(() => {
         let cancelled = false
         const url = `${import.meta.env.BASE_URL}presets/attendee.ticketing.yaml`
         fetch(url)
             .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.text() })
             .then(text => { if (!cancelled) { setYaml(text); setPresetLoaded(true) } })
-            .catch(() => { /* keep DEFAULT_YAML as fallback, stay quiet */ })
+            .catch(() => { /* keep fallback */ })
         return () => { cancelled = true }
     }, [])
+
+    // --- Monaco Editor setup ---
+    const editorRef = React.useRef(null)
+    const editorInstRef = React.useRef(null)
+
+    React.useEffect(() => {
+        const el = editorRef.current
+        if (!el) return
+
+        const inst = monaco.editor.create(el, {
+            value: yaml,
+            language: 'yaml',
+            theme: (theme === 'dark' ? 'vs-dark' : theme === 'light' ? 'vs'
+                : (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'vs-dark' : 'vs')),
+            fontSize: 16,
+            minimap: { enabled: false },
+            automaticLayout: true,
+            wordWrap: 'off',
+            bracketPairColorization: { enabled: true },
+            renderWhitespace: 'selection'
+        })
+        editorInstRef.current = inst
+
+        // Cmd/Ctrl+Shift+Enter to run
+        inst.addAction({
+            id: 'run-transform',
+            label: 'Run Transform',
+            keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.Enter],
+            run: () => run()
+        })
+
+        const onKeyDownCapture = (e) => {
+            const isCmdOrCtrl = e.metaKey || e.ctrlKey
+            if (isCmdOrCtrl && e.shiftKey && e.key === 'Enter') {
+                e.preventDefault()
+                e.stopPropagation()
+                run()
+            }
+        }
+
+        el.addEventListener('keydown', onKeyDownCapture, true)
+
+        // Mirror content into state
+        const sub = inst.onDidChangeModelContent(() => setYaml(inst.getValue()))
+
+        return () => {
+            el.removeEventListener('keydown', onKeyDownCapture, true)
+            sub.dispose()
+            inst.dispose()
+            editorInstRef.current = null
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []) // create once
+
+    // Keep theme in sync
+    React.useEffect(() => {
+        monaco.editor.setTheme(
+            theme === 'dark' ? 'vs-dark' :
+                theme === 'light' ? 'vs' :
+                    (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'vs-dark' : 'vs')
+        )
+    }, [theme])
+
+    // If YAML state changes due to preset load, push into editor (but avoid loops)
+    React.useEffect(() => {
+        const inst = editorInstRef.current
+        if (!inst) return
+        if (inst.getValue() !== yaml) inst.setValue(yaml)
+    }, [yaml])
 
     const run = () => {
         if (!sampleRow) return
         setErr(null); setOutput(null)
         workerRef.current.postMessage({ type: 'transform', row: sampleRow, mappingYaml: yaml })
+        setActiveRightTab('output')
     }
+
+    // Helpers for source viewer
+    const datasetKeys = ['$attendees', '$tickets', '$checkins']
+    const currentDatasetObj =
+        sampleRow ? (sampleRow[activeDataset] ?? {}) : {}
+
+    const flattened = React.useMemo(() => {
+        if (!sampleRow) return []
+        const scope = activeDataset
+        const data = sampleRow[scope] ?? {}
+        return Array.from(flatten(data, scope))
+    }, [sampleRow, activeDataset])
 
     return (
         <main style={{ padding: 24, lineHeight: 1.5 }}>
@@ -114,17 +227,12 @@ export default function App() {
                 <button className="btn" onClick={() => setTheme('system')}>Use system</button>
             </div>
 
+            {/* Main grid: Monaco (left) + Right panel (Output/Source tabs) */}
             <section style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)', gap: 16 }}>
+                {/* Monaco Editor */}
                 <div>
                     <h3>Mapping YAML</h3>
-                    <textarea
-                        value={yaml}
-                        onChange={(e) => setYaml(e.target.value)}
-                        className="panel text-mono"
-                        spellCheck={false}
-                        wrap="off"
-                        style={{ width: '100%', height: 300, padding: 12 }}
-                    />
+                    <div ref={editorRef} className="panel text-mono" style={{ height: 360, padding: 0 }} />
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12 }}>
                         <button className="btn" onClick={run} disabled={!sampleRow}>
                             {sampleRow ? 'Run' : 'Loading sample…'}
@@ -135,11 +243,99 @@ export default function App() {
                     </div>
                 </div>
 
+                {/* Right panel with tabs */}
                 <div>
-                    <h3>Output</h3>
-                    {err && <pre className="panel" style={{ padding: 12 }}>{String(err)}</pre>}
-                    {output && <pre className="panel text-mono" style={{ padding: 12 }}>{JSON.stringify(output, null, 2)}</pre>}
-                    {!err && !output && <p className="muted">Press <strong>Run</strong> to transform.</p>}
+                    <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                        <button
+                            className="btn"
+                            onClick={() => setActiveRightTab('output')}
+                            style={{ background: activeRightTab === 'output' ? 'var(--panel)' : 'transparent' }}
+                        >
+                            Output
+                        </button>
+                        <button
+                            className="btn"
+                            onClick={() => setActiveRightTab('source')}
+                            style={{ background: activeRightTab === 'source' ? 'var(--panel)' : 'transparent' }}
+                        >
+                            Source
+                        </button>
+                    </div>
+
+                    {activeRightTab === 'output' ? (
+                        <>
+                            <h3>Output</h3>
+                            {err && <pre className="panel" style={{ padding: 12 }}>{String(err)}</pre>}
+                            {output && <pre className="panel text-mono" style={{ padding: 12, maxHeight: 360, overflow: 'auto' }}>
+                                {JSON.stringify(output, null, 2)}
+                            </pre>}
+                            {!err && !output && <p className="muted">Press <strong>Run</strong> to transform.</p>}
+                        </>
+                    ) : (
+                        <>
+                            <h3>Source</h3>
+                            <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                                {datasetKeys.map(k => (
+                                    <button
+                                        key={k}
+                                        className="btn"
+                                        onClick={() => setActiveDataset(k)}
+                                        style={{ background: activeDataset === k ? 'var(--panel)' : 'transparent' }}
+                                    >
+                                        {k.replace('$', '')}
+                                    </button>
+                                ))}
+                                <div style={{ marginLeft: 'auto' }}>
+                                    <label className="muted" style={{ marginRight: 8 }}>
+                                        <input type="checkbox" checked={showRaw} onChange={e => setShowRaw(e.target.checked)} />
+                                        {' '}Raw JSON
+                                    </label>
+                                </div>
+                            </div>
+
+                            {!sampleRow && <p className="muted">Loading source…</p>}
+
+                            {sampleRow && !showRaw && (
+                                <div className="panel" style={{ padding: 8, maxHeight: 360, overflow: 'auto' }}>
+                                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+                                        <thead>
+                                            <tr className="muted">
+                                                <th style={{ textAlign: 'left', padding: '6px 8px' }}>Path</th>
+                                                <th style={{ textAlign: 'left', padding: '6px 8px' }}>Value</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {flattened.length === 0 && (
+                                                <tr><td className="muted" colSpan={2} style={{ padding: '6px 8px' }}>(empty)</td></tr>
+                                            )}
+                                            {flattened.map(([path, value]) => (
+                                                <tr key={path}>
+                                                    <td style={{ padding: '6px 8px', whiteSpace: 'nowrap' }}>
+                                                        <code
+                                                            title="Click to copy"
+                                                            style={{ cursor: 'pointer' }}
+                                                            onClick={() => copyToClipboard(path)}
+                                                        >
+                                                            {path}
+                                                        </code>
+                                                    </td>
+                                                    <td style={{ padding: '6px 8px' }}>
+                                                        <code className="text-mono">{JSON.stringify(value)}</code>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+
+                            {sampleRow && showRaw && (
+                                <pre className="panel text-mono" style={{ padding: 12, maxHeight: 360, overflow: 'auto' }}>
+                                    {JSON.stringify(currentDatasetObj, null, 2)}
+                                </pre>
+                            )}
+                        </>
+                    )}
                 </div>
             </section>
 
