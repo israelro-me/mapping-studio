@@ -26,14 +26,23 @@ jobs:
 
       - run: npm ci || npm i
 
+      # optional: timestamp for the header badge
+      - name: Compute build time (UTC)
+        id: meta
+        run: echo "build_time=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> $GITHUB_OUTPUT
+
       - run: npm run typecheck
 
-      - name: Expose build metadata
-        run: |
-          echo "VITE_GIT_SHA=${GITHUB_SHA::7}" >> $GITHUB_ENV
+      - name: Build
+        env:
+          # THIS toggles vite.config.ts base to /mapping-studio/
+          GITHUB_PAGES: 'true'
+          # build badge inputs
+          VITE_GIT_SHA: ${{ github.sha }}
+          BUILD_TIME: ${{ steps.meta.outputs.build_time }}
+        run: npm run build
 
-      - run: npm run build
-
+      # SPA fallback for gh-pages deep links
       - run: cp dist/index.html dist/404.html || true
 
       - uses: actions/upload-pages-artifact@v3
